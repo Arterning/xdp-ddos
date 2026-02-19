@@ -38,7 +38,7 @@ struct ddos_config {
 #define DEFAULT_BLACKLIST_DUR_S   300     // 黑名单持续 5 分钟
 
 // 每个 IP 的令牌桶状态
-struct token_bucket {
+struct ddos_token_bucket {
     __u64 tokens;           // 当前令牌数量
     __u64 last_refill_ns;   // 上次补充令牌的时间（纳秒）
     __u64 pass_packets;     // 通过的包数
@@ -53,7 +53,7 @@ struct syn_counter {
 };
 
 // 黑名单条目
-struct blacklist_entry {
+struct ddos_blacklist_entry {
     __u64 added_ns;         // 加入黑名单的时间
     __u64 drop_count;       // 累计丢包数
     __u8  reason;           // 原因（1=限速, 2=SYN flood）

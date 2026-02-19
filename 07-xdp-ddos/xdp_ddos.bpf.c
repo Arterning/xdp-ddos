@@ -45,14 +45,14 @@ struct {
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, struct ddos_config);
-} config SEC(".maps");
+} cfg_map SEC(".maps");
 
 // IP 黑名单（LRU_HASH：自动淘汰旧条目，节省内存）
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
     __type(key, __u32);   // IPv4 源地址（网络字节序）
-    __type(value, struct blacklist_entry);
+    __type(value, struct ddos_blacklist_entry);
 } blacklist SEC(".maps");
 
 // 每 IP 令牌桶状态（LRU_HASH：自动清理不活跃 IP）
@@ -60,7 +60,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 65536);
     __type(key, __u32);
-    __type(value, struct token_bucket);
+    __type(value, struct ddos_token_bucket);
 } buckets SEC(".maps");
 
 // 每 IP SYN 计数器
@@ -99,7 +99,7 @@ static __always_inline void inc_stats(__u32 idx)
 static __always_inline struct ddos_config get_config(void)
 {
     __u32 zero = 0;
-    struct ddos_config *cfg = bpf_map_lookup_elem(&config, &zero);
+    struct ddos_config *cfg = bpf_map_lookup_elem(&cfg_map, &zero);
     if (cfg) return *cfg;
 
     // 默认配置
@@ -118,11 +118,11 @@ static __always_inline struct ddos_config get_config(void)
 static __always_inline bool token_bucket_allow(__u32 src_ip, __u64 now_ns,
                                                 struct ddos_config *cfg)
 {
-    struct token_bucket *tb = bpf_map_lookup_elem(&buckets, &src_ip);
+    struct ddos_token_bucket *tb = bpf_map_lookup_elem(&buckets, &src_ip);
 
     if (!tb) {
         // 新 IP：初始化令牌桶（满桶）
-        struct token_bucket new_tb = {
+        struct ddos_token_bucket new_tb = {
             .tokens         = cfg->burst_size,
             .last_refill_ns = now_ns,
             .pass_packets   = 1,
@@ -208,7 +208,7 @@ static __always_inline bool syn_flood_check(__u32 src_ip, __u64 now_ns,
 static __always_inline void blacklist_ip(__u32 src_ip, __u64 now_ns,
                                           __u8 reason, __u64 drop_count)
 {
-    struct blacklist_entry entry = {
+    struct ddos_blacklist_entry entry = {
         .added_ns   = now_ns,
         .drop_count = drop_count,
         .reason     = reason,
@@ -255,7 +255,7 @@ int xdp_ddos_protect(struct xdp_md *ctx)
     __u64 now_ns = bpf_ktime_get_ns();
 
     // ── 第一道防线：黑名单检查（O(1) hash lookup）────────
-    struct blacklist_entry *bl = bpf_map_lookup_elem(&blacklist, &src_ip);
+    struct ddos_blacklist_entry *bl = bpf_map_lookup_elem(&blacklist, &src_ip);
     if (bl) {
         // 检查黑名单是否过期
         struct ddos_config cfg = get_config();
@@ -300,7 +300,7 @@ check_rate:;
         inc_stats(STATS_DROP);
 
         // 检查是否需要自动拉黑
-        struct token_bucket *tb = bpf_map_lookup_elem(&buckets, &src_ip);
+        struct ddos_token_bucket *tb = bpf_map_lookup_elem(&buckets, &src_ip);
         if (tb && tb->rate_limit_hits >= cfg.blacklist_threshold) {
             blacklist_ip(src_ip, now_ns, BL_REASON_RATE_LIMIT,
                          tb->drop_packets);

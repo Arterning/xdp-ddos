@@ -189,7 +189,7 @@ int main(int argc, char **argv)
     }
 
     // 写入配置
-    init_config(bpf_map__fd(skel->maps.config),
+    init_config(bpf_map__fd(skel->maps.cfg_map),
                 max_pps, burst,
                 DEFAULT_SYN_THRESHOLD,
                 DEFAULT_BLACKLIST_THRESH,
@@ -216,7 +216,7 @@ int main(int argc, char **argv)
     if (block_ip[0]) {
         __u32 ip; __u8 reason = BL_REASON_RATE_LIMIT;
         if (inet_pton(AF_INET, block_ip, &ip) == 1) {
-            struct blacklist_entry entry = {
+            struct ddos_blacklist_entry entry = {
                 .added_ns = 0, .drop_count = 0, .reason = reason
             };
             bpf_map_update_elem(bpf_map__fd(skel->maps.blacklist),
