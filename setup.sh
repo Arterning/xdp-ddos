@@ -47,13 +47,25 @@ apt-get install -y \
     linux-tools-$(uname -r) 2>/dev/null || true
 
 info "安装 libbpf 开发库..."
-apt-get install -y libbpf-dev 2>/dev/null || {
-    warn "libbpf-dev 未找到，尝试从源码编译..."
-    apt-get install -y git libelf-dev zlib1g-dev
-    git clone --depth 1 https://github.com/libbpf/libbpf.git /tmp/libbpf
-    make -C /tmp/libbpf/src install
-    ldconfig
-}
+
+# 1. 安装构建依赖
+sudo apt install -y libelf-dev zlib1g-dev git
+
+# 2. 拉取最新 libbpf 源码
+cd /tmp
+git clone --depth 1 https://github.com/libbpf/libbpf.git
+cd libbpf/src
+
+# 3. 编译并安装（libbpf.so.1 和旧的 libbpf.so.0 共存，soname 不同）
+make
+sudo make install PREFIX=/usr LIBDIR=/usr/lib/x86_64-linux-gnu
+sudo ldconfig
+
+# 4. 验证：应该同时看到 libbpf.so.0 和 libbpf.so.1
+ldconfig -p | grep libbpf
+
+
+sudo apt install -y bpftrace
 
 info "安装 bpftool..."
 # Ubuntu 22.04+ 可以直接安装
