@@ -1,0 +1,41 @@
+#!/usr/bin/env bpftrace
+// ============================================================
+// 01 - Hello World BPFTrace 版本
+// 用法: sudo bpftrace hello.bt
+//
+// 知识点:
+//   tracepoint  - 内核中预定义的稳定钩子
+//   syscalls    - 系统调用分类
+//   sys_enter_* - 系统调用进入时触发
+//   args->      - 访问 tracepoint 的参数结构体字段
+//   comm        - 当前进程名（BPFTrace 内置变量）
+//   pid         - 当前进程 PID（BPFTrace 内置变量）
+//   str()       - 将用户空间指针转换为字符串
+// ============================================================
+
+BEGIN
+{
+    printf("%-8s %-6s %-6s %-20s %s\n",
+           "TIME", "PID", "PPID", "COMM", "FILENAME");
+    printf("%-8s %-6s %-6s %-20s %s\n",
+           "--------", "------", "------", "--------------------", "--------");
+}
+
+// 挂载到 execve 系统调用入口
+// 每当有进程调用 execve() 启动新程序时触发
+tracepoint:syscalls:sys_enter_execve
+{
+    // args->filename 是 execve 的第一个参数，指向要执行的文件路径
+    // str() 将内核中的用户空间指针安全地转换为字符串
+    printf("%-8s %-6d %-6d %-20s %s\n",
+           strftime("%H:%M:%S", nsecs),
+           pid,
+           curtask->real_parent->tgid,
+           comm,
+           str(args->filename));
+}
+
+END
+{
+    printf("\n[*] 已退出\n");
+}

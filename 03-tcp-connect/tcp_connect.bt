@@ -1,0 +1,90 @@
+#!/usr/bin/env bpftrace
+// ============================================================
+// 03 - TCP 连接监控 BPFTrace 版
+// 用法: sudo bpftrace tcp_connect.bt
+//
+// 使用 sock:inet_sock_set_state tracepoint
+// 这是监控 TCP 状态变化的最佳 tracepoint（内核 4.16+）
+//
+// TCP 状态机:
+//   TCP_CLOSE(7) → TCP_SYN_SENT(2)   = 主动发起连接（connect）
+//   TCP_SYN_RECV(3) → TCP_ESTABLISHED(1) = 连接建立
+//   * → TCP_CLOSE_WAIT(8)             = 远端关闭
+//   * → TCP_TIME_WAIT(6)              = 本端主动关闭
+// ============================================================
+
+BEGIN
+{
+    printf("%-8s %-6s %-20s %-5s %-20s %-5s %-7s %s\n",
+           "TIME", "PID", "SADDR", "SPORT", "DADDR", "DPORT", "EVENT", "COMM");
+    printf("%s\n", "-----------------------------------------------------------------------------------------------");
+
+    // TCP 状态名称映射
+    @tcp_states[1]  = "ESTABLISHED";
+    @tcp_states[2]  = "SYN_SENT";
+    @tcp_states[3]  = "SYN_RECV";
+    @tcp_states[4]  = "FIN_WAIT1";
+    @tcp_states[5]  = "FIN_WAIT2";
+    @tcp_states[6]  = "TIME_WAIT";
+    @tcp_states[7]  = "CLOSE";
+    @tcp_states[8]  = "CLOSE_WAIT";
+    @tcp_states[9]  = "LAST_ACK";
+    @tcp_states[10] = "LISTEN";
+    @tcp_states[11] = "CLOSING";
+}
+
+// sock:inet_sock_set_state - TCP 状态变化时触发
+// args->oldstate, args->newstate: 新旧状态
+// args->family: AF_INET(2) 或 AF_INET6(10)
+tracepoint:sock:inet_sock_set_state
+/args->protocol == IPPROTO_TCP/
+{
+    $old = @tcp_states[args->oldstate];
+    $new = @tcp_states[args->newstate];
+
+    // 只显示重要的状态转换
+    if (args->newstate == 1  ||  // → ESTABLISHED（连接建立）
+        args->newstate == 2  ||  // → SYN_SENT（发起连接）
+        args->newstate == 7  ||  // → CLOSE（关闭）
+        args->newstate == 8) {   // → CLOSE_WAIT（收到FIN）
+
+        if (args->family == 2) {
+            // IPv4
+            printf("%-8s %-6d %-20s %-5d %-20s %-5d %s→%s [%s]\n",
+                   strftime("%H:%M:%S", nsecs),
+                   pid,
+                   ntop(args->saddr),
+                   args->sport,
+                   ntop(args->daddr),
+                   args->dport,
+                   $old, $new,
+                   comm);
+        } else {
+            // IPv6
+            printf("%-8s %-6d %-20s %-5d %-20s %-5d %s→%s [%s]\n",
+                   strftime("%H:%M:%S", nsecs),
+                   pid,
+                   ntop(args->saddr_v6),
+                   args->sport,
+                   ntop(args->daddr_v6),
+                   args->dport,
+                   $old, $new,
+                   comm);
+        }
+    }
+}
+
+// 统计每个目标地址的连接次数
+tracepoint:sock:inet_sock_set_state
+/args->protocol == IPPROTO_TCP && args->newstate == 1 && args->family == 2/
+{
+    @connect_count[ntop(args->daddr), args->dport] = count();
+}
+
+END
+{
+    clear(@tcp_states);
+    printf("\n=== 连接统计（目标地址:端口） ===\n");
+    print(@connect_count);
+    clear(@connect_count);
+}

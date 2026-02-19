@@ -1,0 +1,60 @@
+#!/usr/bin/env bpftrace
+// ============================================================
+// 05 - 函数耗时统计 BPFTrace 版
+// 用法: sudo bpftrace func_latency.bt
+//
+// 使用 kprobe/kretprobe 对测量 vfs_read 的耗时
+// 并以对数直方图（log2 histogram）展示分布
+//
+// BPFTrace 核心技巧:
+//   @map[key] = value   - 关联数组（存储每个线程的开始时间）
+//   hist(value)         - log2 直方图（桶大小翻倍）
+//   lhist(v, min, max, step) - 线性直方图
+//   nsecs               - 当前时间（纳秒）
+//   tid                 - 线程 ID（用于匹配 kprobe/kretprobe）
+//   interval:s:N        - 每 N 秒触发一次
+// ============================================================
+
+BEGIN
+{
+    printf("[*] 统计 vfs_read() 耗时，每 5 秒输出一次直方图\n");
+    printf("[*] 按 Ctrl+C 退出\n\n");
+}
+
+// 记录 vfs_read 进入时间
+// 用 tid（线程ID）作为 key，确保同一线程的 kprobe/kretprobe 匹配
+kprobe:vfs_read
+{
+    @start[tid] = nsecs;
+}
+
+// 计算耗时并存入 log2 直方图
+kretprobe:vfs_read
+/@start[tid]/  // 过滤：只处理有对应 kprobe 记录的情况（防止漏掉入口）
+{
+    $delta_us = (nsecs - @start[tid]) / 1000; // 纳秒 → 微秒
+
+    // 按进程名分组统计（每个程序单独一个直方图）
+    @latency_us[comm] = hist($delta_us);
+
+    // 总体直方图
+    @total_latency_us = hist($delta_us);
+
+    delete(@start[tid]);
+}
+
+// 每 5 秒打印一次统计
+interval:s:5
+{
+    printf("\n=== vfs_read 延迟分布（单位: 微秒）===\n");
+    print(@total_latency_us);
+    printf("\n=== 按进程名分组 ===\n");
+    print(@latency_us);
+    clear(@total_latency_us);
+    clear(@latency_us);
+}
+
+END
+{
+    clear(@start);
+}

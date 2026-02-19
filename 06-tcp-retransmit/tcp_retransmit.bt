@@ -1,0 +1,65 @@
+#!/usr/bin/env bpftrace
+// ============================================================
+// 06 - TCP 重传监控 BPFTrace 版
+// 用法: sudo bpftrace tcp_retransmit.bt
+//
+// TCP 重传是网络拥塞/丢包的重要指标
+// 知识点：
+//   tracepoint:tcp:tcp_retransmit_skb - 内核 TCP 重传 tracepoint
+//   skbaddr  - socket buffer 地址
+//   skaddr   - sock 结构指针
+//   args->saddr/daddr/sport/dport - 连接四元组
+// ============================================================
+
+BEGIN
+{
+    printf("%-8s %-6s %-20s %-6s %-20s %-6s %s\n",
+           "TIME", "PID", "SADDR", "SPORT", "DADDR", "DPORT", "COMM");
+    printf("%s\n", "----------------------------------------------------------------------");
+}
+
+// tracepoint:tcp:tcp_retransmit_skb
+// 每次 TCP 重传（包括超时重传和快速重传）时触发
+tracepoint:tcp:tcp_retransmit_skb
+{
+    printf("%-8s %-6d %-20s %-6d %-20s %-6d %s\n",
+           strftime("%H:%M:%S", nsecs),
+           pid,
+           ntop(args->saddr),
+           args->sport,
+           ntop(args->daddr),
+           args->dport,
+           comm);
+
+    // 按目标 IP 统计重传次数
+    @retransmit_count[ntop(args->daddr), args->dport] = count();
+}
+
+// tracepoint:tcp:tcp_retransmit_synack
+// SYN-ACK 重传（服务端等待客户端完成三次握手超时）
+tracepoint:tcp:tcp_retransmit_synack
+{
+    printf("%-8s %-6d %-20s %-6d %-20s %-6d %s [SYNACK重传]\n",
+           strftime("%H:%M:%S", nsecs),
+           pid,
+           ntop(args->saddr),
+           args->sport,
+           ntop(args->daddr),
+           args->dport,
+           comm);
+}
+
+// 每 10 秒输出重传排行榜
+interval:s:10
+{
+    printf("\n=== 重传次数统计（目标IP:端口）===\n");
+    print(@retransmit_count);
+    printf("=================================\n\n");
+}
+
+END
+{
+    printf("\n=== 最终重传统计 ===\n");
+    print(@retransmit_count);
+    clear(@retransmit_count);
+}

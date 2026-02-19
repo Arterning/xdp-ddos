@@ -1,0 +1,78 @@
+#!/usr/bin/env bpftrace
+// ============================================================
+// 02 - 进程监控 BPFTrace 版
+// 用法: sudo bpftrace process_monitor.bt
+//
+// 监控:
+//   - 进程 exec：程序被执行（execve 系统调用完成后）
+//   - 进程 fork：子进程被创建
+//   - 进程 exit：进程退出，记录运行时长
+//
+// BPFTrace 技巧:
+//   curtask          - 当前 task_struct 指针
+//   curtask->tgid    - 当前进程 PID
+//   @map[key] = val  - 关联数组（BPF hash map）
+//   delete(@map[k])  - 删除 map 条目
+// ============================================================
+
+BEGIN
+{
+    printf("%-10s %-7s %-7s %-7s %-20s %s\n",
+           "TIME", "EVENT", "PID", "PPID", "COMM", "DETAIL");
+    printf("%s\n", "--------------------------------------------------------------------------");
+}
+
+// ── EXEC：程序被执行 ──────────────────────────────────────────
+// sched:sched_process_exec 在 execve 执行成功后触发
+// 此时进程已经完成了地址空间替换，comm 已更新为新程序名
+tracepoint:sched:sched_process_exec
+{
+    printf("%-10s %-7s %-7d %-7d %-20s %s\n",
+           strftime("%H:%M:%S", nsecs),
+           "EXEC",
+           pid,
+           curtask->real_parent->tgid,
+           comm,
+           str(args->filename));
+}
+
+// ── FORK：子进程被创建 ────────────────────────────────────────
+// sched:sched_process_fork 在 fork/clone 系统调用后触发
+// args->child_pid 是新创建的子进程 PID
+tracepoint:sched:sched_process_fork
+{
+    printf("%-10s %-7s %-7d %-7d %-20s child_pid=%d\n",
+           strftime("%H:%M:%S", nsecs),
+           "FORK",
+           pid,
+           curtask->real_parent->tgid,
+           comm,
+           args->child_pid);
+
+    // 记录进程创建时间（用于计算生命周期）
+    @start_time[args->child_pid] = nsecs;
+}
+
+// ── EXIT：进程退出 ────────────────────────────────────────────
+// sched:sched_process_exit 在进程退出时触发
+tracepoint:sched:sched_process_exit
+{
+    $duration_ms = @start_time[pid] ?
+                   (nsecs - @start_time[pid]) / 1000000 : 0;
+
+    printf("%-10s %-7s %-7d %-7d %-20s duration=%dms\n",
+           strftime("%H:%M:%S", nsecs),
+           "EXIT",
+           pid,
+           curtask->real_parent->tgid,
+           comm,
+           $duration_ms);
+
+    delete(@start_time[pid]);
+}
+
+END
+{
+    clear(@start_time);
+    printf("\n[*] 监控结束\n");
+}
