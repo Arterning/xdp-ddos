@@ -23,6 +23,7 @@
 #include <getopt.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <linux/if_link.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "xdp_ddos.skel.h"
