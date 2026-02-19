@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#define _GNU_SOURCE   // 暴露 glibc 扩展类型（struct tcphdr 等）
 // ============================================================
 // 08 - DDoS 测试流量生成器
 //
@@ -317,10 +318,12 @@ static void do_flood(int sock, const struct flood_cfg *cfg)
         inet_ntop(AF_INET, &cfg->src_ip, src_str, sizeof(src_str));
         printf("[+] 源 IP: %s（固定，触发 per-IP 限速）\n", src_str);
     }
-    printf("[+] 目标速率: %ld pps  持续: %s\n",
-           cfg->pps,
-           cfg->duration ? ({ static char buf[32]; snprintf(buf, sizeof(buf), "%d 秒", cfg->duration); buf; })
-                         : "无限（Ctrl+C 停止）");
+    char dur_str[32];
+    if (cfg->duration)
+        snprintf(dur_str, sizeof(dur_str), "%d 秒", cfg->duration);
+    else
+        snprintf(dur_str, sizeof(dur_str), "无限（Ctrl+C 停止）");
+    printf("[+] 目标速率: %ld pps  持续: %s\n", cfg->pps, dur_str);
     printf("[+] 开始发包...\n\n");
 
     while (running) {
